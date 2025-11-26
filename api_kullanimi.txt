@@ -1,0 +1,271 @@
+🔗 Base URL
+
+Lokal geliştirme için:
+
+http://localhost:8000/api
+
+
+Sunucuya attığında:
+
+http://<server-ip>:8000/api
+
+🔐 Güvenlik / Kimlik Doğrulama Mantığı
+
+Kullanıcı girişi (login) yok, sistem anonim.
+
+Her /parking/start çağrısında backend:
+
+session_id
+
+session_token (güçlü random, 64 karakterlik hex)
+
+üretip döner.
+
+/parking/end çağırırken mutlaka hem session_id hem session_token gönderilmelidir.
+Böylece sadece o oturumu başlatan cihaz, parkı sonlandırabilir.
+
+🩺 1. Health Check
+GET /api/health
+
+Amaç: Backend + DB ayakta mı diye kontrol.
+
+Örnek:
+
+curl http://localhost:8000/api/health
+
+
+Örnek cevap:
+
+{
+  "status": "ok",
+  "db": "connected"
+}
+
+📍 2. Zones (bölgeler)
+2.1 GET /api/zones
+
+Amaç: Harita için tüm park zonelarını listele.
+
+Örnek:
+
+curl http://localhost:8000/api/zones
+
+
+Örnek cevap:
+
+[
+  {
+    "id": 1,
+    "code": "Z1",
+    "name": "Čair Zone",
+    "lat": 42.004,
+    "lng": 21.441,
+    "radius_m": 70,
+    "capacity": 40
+  },
+  {
+    "id": 2,
+    "code": "Z2",
+    "name": "Karpoš Zone",
+    "lat": 41.998,
+    "lng": 21.391,
+    "radius_m": 80,
+    "capacity": 60
+  }
+]
+
+2.2 GET /api/zones/nearest?lat=..&lng=..
+
+Amaç: GPS ile en yakın zone’u bulmak (mobil uygulama açıldığında).
+
+Örnek:
+
+curl "http://localhost:8000/api/zones/nearest?lat=41.995&lng=21.431"
+
+
+Örnek cevap:
+
+{
+  "zone_id": 3,
+  "zone_code": "Z3",
+  "distance_m": 23.5,
+  "radius_m": 80,
+  "inside": true
+}
+
+2.3 GET /api/zones/status
+
+Amaç: Tüm zonelar için realtime + AI tahmini verilerini almak.
+(frontend harita ekranı burayı kullanır)
+
+Örnek:
+
+curl http://localhost:8000/api/zones/status
+
+
+Örnek cevap:
+
+[
+  {
+    "zone_id": 2,
+    "zone_code": "Z2",
+    "name": "Karpoš Zone",
+    "lat": 41.998,
+    "lng": 21.391,
+    "radius_m": 80,
+    "capacity": 60,
+    "current_occupied": 0,
+    "current_free": 60,
+    "pred": {
+      "occupancy_next_hour": 0.0411,
+      "wait_time_minutes": 0.0,
+      "avg_duration_minutes": 49.16
+    }
+  }
+]
+
+
+Açıklama:
+
+current_occupied → şu an DB’ye göre dolu araç sayısı
+
+current_free → capacity - current_occupied
+
+pred.occupancy_next_hour → 1 saat sonraki tahmini doluluk oranı (0–1)
+
+pred.wait_time_minutes → zone full ise ilk boş yer için bekleme süresi
+
+pred.avg_duration_minutes → bu zone’da ortalama park süresi tahmini
+
+2.4 GET /api/zones/<id>/status
+
+Amaç: Tek bir zone için detaylı tahmin.
+
+Örnek:
+
+curl http://localhost:8000/api/zones/2/status
+
+
+Örnek cevap: (yukarıdakiyle aynı format, tek obje)
+
+🚗 3. Parking Akışı
+3.1 POST /api/parking/start
+
+Amaç: Kullanıcı “buraya park ettim” dediğinde session açar.
+
+Body’de 3 senaryo var:
+
+a) Sadece QR ile
+{
+  "qr_code": "Z2-KARPOS-ENTRY-1",
+  "vehicle_plate": "SK-123-AB",
+  "plate_country": "MK"
+}
+
+b) Sadece GPS ile
+{
+  "lat": 41.995,
+  "lng": 21.431,
+  "vehicle_plate": "34 ABC 987",
+  "plate_country": "TR"
+}
+
+c) QR + GPS birlikte (en iyi senaryo)
+{
+  "qr_code": "Z2-KARPOS-ENTRY-1",
+  "lat": 41.995,
+  "lng": 21.431,
+  "vehicle_plate": "B 1234 XY",
+  "plate_country": "DE"
+}
+
+
+Örnek curl:
+
+curl -X POST http://localhost:8000/api/parking/start \
+  -H "Content-Type: application/json" \
+  -d '{
+    "qr_code": "Z2-KARPOS-ENTRY-1",
+    "vehicle_plate": "SK-123-AB",
+    "plate_country": "MK"
+  }'
+
+
+Örnek cevap:
+
+{
+  "session_id": 42,
+  "session_token": "a94f3ac7b91f44ce9b8141e1f582b61d",
+  "zone_id": 2,
+  "zone_code": "Z2",
+  "vehicle_plate": "SK-123-AB",
+  "plate_country": "MK",
+  "started_at": "2025-11-26T18:58:12.345678"
+}
+
+
+📌 Mobil uygulama bu cevaptaki session_id + session_token’ı saklayacak
+“You’re parked in Z2” ekranı bu bilgilerle gösterilir.
+
+3.2 POST /api/parking/end
+
+Amaç: Kullanıcı “park yerinden ayrılıyorum” dediğinde çağrılır.
+
+Body:
+
+{
+  "session_id": 42,
+  "session_token": "a94f3ac7b91f44ce9b8141e1f582b61d"
+}
+
+
+Örnek curl:
+
+curl -X POST http://localhost:8000/api/parking/end \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_id": 42,
+    "session_token": "a94f3ac7b91f44ce9b8141e1f582b61d"
+  }'
+
+
+Örnek cevap:
+
+{ "ok": true }
+
+
+Backend’in yaptığı:
+
+parking_sessions tablosunda:
+
+status = ended
+
+ended_at = NOW()
+
+spot_events tablosuna:
+
+event_type = 'became_free'
+event’ini ekler.
+
+🧱 4. Özet akış (frontend / mobil gözüyle)
+
+Uygulama açılır → GET /api/zones ile zone’lar çekilir.
+
+Harita üzerinde kullanıcı konumu alınıp:
+
+GET /api/zones/nearest?lat=..&lng=.. ile en yakın zone bulunabilir.
+
+Kullanıcı park eder → QR veya GPS ile:
+
+POST /api/parking/start
+→ session_id + session_token saklanır.
+
+“You’re parked in Z2” ekranı gösterilir.
+
+Kullanıcı ayrılır → “I’m leaving” butonu:
+
+POST /api/parking/end (session_id + session_token ile)
+
+Ana harita ekranı:
+
+GET /api/zones/status ile realtime + predictive veriyi çeker.
