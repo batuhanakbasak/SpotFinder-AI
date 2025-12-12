@@ -1,10 +1,16 @@
 from fastapi import FastAPI
-import app.routers.test_router as test_router
 
-app = FastAPI()
+# Routers
+from app.routers import test_router
+
+app = FastAPI(
+    title="SpotFinder AI Backend",
+    version="1.0.0",
+)
 
 @app.get("/")
-def read_root():
-    return {"message": "Hello SpotFinder!"}
+def home():
+    return {"message": "SpotFinder Backend is running"}
 
+# Register routers
 app.include_router(test_router.router, prefix="/test", tags=["test"])
